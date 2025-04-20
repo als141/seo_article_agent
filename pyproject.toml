@@ -1,0 +1,39 @@
+[project]
+name = "seo_article_agent"
+version = "0.1.0"
+description = "AI agent that generates SEO‑optimized, human‑like articles using OpenAI Agents SDK and Responses API."
+requires-python = ">=3.12"
+readme = "README.md"
+authors = [{name="Your Name", email="you@example.com"}]
+
+dependencies = [
+    "openai-agents>=0.0.11",
+    "openai>=1.75.0",
+    "beautifulsoup4>=4.12.3",
+    "readability-lxml>=0.8.1",
+    "python-slugify>=8.0.1",
+    "rich>=13.7.0",
+    "tiktoken>=0.5.2",
+    "aiohttp>=3.9.5",
+    "urllib3>=2.2.1",
+    "lxml[html-clean]>=5.3.2",
+]
+
+[project.optional-dependencies]
+dev = ["ruff", "pytest", "httpx"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+seo-agent = "seo_agent.cli:main"
+
+[tool.hatch.build]
+sources = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/seo_agent"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/seo_agent/**", "README.md", "pyproject.toml"]
