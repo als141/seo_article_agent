@@ -1,92 +1,53 @@
-import asyncio
-from typing import Optional, List
-from openai import OpenAI
-from agents import Agent, function_tool
+# src/seo_agent/agent.py
+from __future__ import annotations
+from openai import AsyncOpenAI
+from agents import Agent, FileSearchTool, WebSearchTool
+from agents.models.openai_responses import OpenAIResponsesModel
 from .config import settings
-from . import tools as mytools
 
-client = OpenAI(api_key=settings.api_key)
+class SEOArticleAgent(Agent[None]):
+    """
+    An agent that:
+    1. 下調べ（FileSearchTool / WebSearchTool）
+    2. アウトライン → 本文 (日本語 2,000–2,500 words)
+    3. 簡易 SEO スコア & 改善案
+    を **ワンショットで自動** 生成する。
+    """
 
-class SEOAgent(Agent):
-    """An agent that plans, drafts, and polishes SEO articles for a target website."""
+    def __init__(
+        self,
+        company_name: str,
+        vector_store_id: str,
+        topic_hint: str | None = None,
+        language: str = "ja",
+    ):
+        instructions = f"""
+あなたは一流の日本語 SEO ストラテジスト兼コピーライターです。
+目的: 企業「{company_name}」の公式サイト記事として SEO に強く、かつ人間らしいブログ記事を生成すること。
 
-    def __init__(self, company_url: str, company_name: str, topic: Optional[str] = None,
-                 target_language: str = "ja", **kwargs):
+### ワークフロー (自動実行)
+1. 必要なら FileSearchTool でサイト内容を検索してインサイトを得る。
+2. 与えられたトピック{'（' + topic_hint + '）' if topic_hint else 'が無い場合は自分で最適なトピックを考案'}に対し、
+   - 見出し (H2/H3) を設計し、
+   - 2,000–2,500 文字相当の本文を Markdown で執筆する。
+3. 記事末尾に `## 🔎 Quick SEO Audit` セクションを追加し、
+   スコア (0‑100) と改善案 3 点を箇条書きで示す。
+
+制約:
+- AI らしい定型句を避け、自然な日本語で書く。
+- キーワードは記事全体に自然に散りばめる。
+- ユーザ確認は不要。**最終記事だけを出力**する。
+"""
+        tools = [
+            FileSearchTool(max_num_results=4, vector_store_ids=[vector_store_id]),
+            WebSearchTool(),
+        ]
         super().__init__(
             name="seo_article_agent",
-            instructions=(
-                "You are an elite Japanese SEO strategist. "
-                "Research the client's website via the provided vector‑store tool, "
-                "propose topics, outlines and draft a human‑like article that beats SEO best‑practices."
+            instructions=instructions,
+            tools=tools,
+            model=OpenAIResponsesModel(                 # Responses API を強制
+                model=settings.model,
+                openai_client=AsyncOpenAI(),
             ),
-        )
-        self.company_url = company_url
-        self.company_name = company_name
-        self.topic_hint = topic
-        self.target_language = target_language
-        self.vector_store_id: Optional[str] = None
-
-    # === Tools =========================================================
-
-    @function_tool()
-    async def crawl_and_embed(self) -> str:
-        """Crawl the company website, build a vector store, and return its id."""
-        texts = await mytools.crawl_site(self.company_url, settings.crawl_limit)
-        self.vector_store_id = await mytools.build_vector_store(texts, f"{self.company_name}_site")
-        return self.vector_store_id
-
-    @function_tool()
-    async def generate_topics(self) -> List[str]:
-        """Propose 5 engaging blog topics (Japanese) for the company."""
-        prompt = f"""You are an elite Japanese SEO strategist. Based on the company's website content,
-        propose 5 distinct, high‑impact blog post topics with primary keywords.
-        Output JSON list of objects with 'title' and 'keywords'."""
-        response = client.responses.create(
-            model=settings.model,
-            input=prompt,
-            tools=[{"type": "vector_store", "vector_store_id": self.vector_store_id}],
-        )
-        return response.output[0].content[0].text
-
-    @function_tool()
-    async def expand_outline(self, topic_json: str) -> str:
-        """Create an H2/H3 outline for the selected topic."""
-        prompt = f"Make a detailed outline (Markdown) with H2/H3 headings for the topic below.\n\n{topic_json}"
-        response = client.responses.create(
-            model=settings.model,
-            input=prompt,
-        )
-        return response.output[0].content[0].text
-
-    @function_tool()
-    async def draft_article(self, outline_md: str, keywords: str, style: str = "human") -> str:
-        """Write a 2000–2500‑word Japanese article following the outline and keyword set."""
-        prompt = f"""Write the full article in Japanese following this outline:\n{outline_md}\n
-        Requirements:\n- Natural human tone ({style})\n- Include all subheadings\n
-        - Use keywords: {keywords}\n- Avoid obvious AI patterns\n"""
-        response = client.responses.create(
-            model=settings.model,
-            input=prompt,
-        )
-        return response.output[0].content[0].text
-
-    @function_tool()
-    async def score_seo(self, article_text: str) -> dict:
-        """Return a simple SEO score plus suggestions."""
-        prompt = (
-            "You are an SEO auditor. Score the following article (0‑100) and suggest 5 improvements:\n" +
-            article_text
-        )
-        response = client.responses.create(
-            model=settings.model,
-            input=prompt,
-        )
-        return {"report": response.output[0].content[0].text}
-
-    # === Flow ==========================================================
-
-    async def on_start(self) -> str:
-        return (
-            f"Starting SEO generation for {self.company_name}. Let's begin by crawling the site.\n" +
-            "Use `crawl_and_embed()`."
         )

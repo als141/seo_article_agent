@@ -17,6 +17,7 @@ dependencies = [
     "aiohttp>=3.9.5",
     "urllib3>=2.2.1",
     "lxml[html-clean]>=5.3.2",
+    "griffe>=0.45.2",
 ]
 
 [project.optional-dependencies]

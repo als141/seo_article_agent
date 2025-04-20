@@ -44,16 +44,29 @@ async def crawl_site(root_url: str, limit: int = 20):
     return texts
 
 async def build_vector_store(texts: dict[str, str], name: str) -> str:
-    """Create an OpenAI Vector Store from the crawled pages and return its id."""
-    if not texts:
-        raise ValueError("No texts to store")
-    files = []
-    for path, text in texts.items():
-        tmp_path = f"/tmp/{slugify(path)}.txt"
-        with open(tmp_path, "w") as fp:
-            fp.write(text)
-        f = client.files.create(file=open(tmp_path, "rb"), purpose="assistants")
-        files.append(f.id)
-        os.remove(tmp_path)
-    vs = client.vector_stores.create(name=name, file_ids=files)
+    """
+    Create an OpenAI Vector Store from the crawled pages and return its id.
+    * 空テキストはスキップ
+    * 最低 1 ファイル無い場合は ValueError
+    """
+    from tempfile import NamedTemporaryFile
+
+    valid_items = [(path, txt.strip()) for path, txt in texts.items() if txt.strip()]
+    if not valid_items:
+        raise ValueError("All crawled pages were empty – nothing to embed.")
+
+    file_ids = []
+    for path, content in valid_items:
+        with NamedTemporaryFile("w+", delete=False, suffix=".txt") as tmp:
+            tmp.write(content)
+            tmp.flush()
+            tmp_path = tmp.name
+
+        try:
+            f = client.files.create(file=open(tmp_path, "rb"), purpose="assistants")
+            file_ids.append(f.id)
+        finally:
+            os.remove(tmp_path)
+
+    vs = client.vector_stores.create(name=name, file_ids=file_ids)
     return vs.id
