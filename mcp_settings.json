@@ -6,13 +6,7 @@
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"]
     },
-    "git": {
-      "type": "stdio",
-      "enabled": false,
-      "command": "uvx",
-      "args": ["mcp-server-git"]
-    },
-    "debug_sse": {
+    "seo_local": {
       "type": "sse",
       "enabled": false,
       "url": "http://localhost:8000/sse"

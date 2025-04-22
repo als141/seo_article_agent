@@ -1,9 +1,9 @@
 """
-クローラー＋2つの軽量なローカル関数ツール
-（LLMはAgents SDKを通してこれらを呼び出せます）
+Crawler + ローカル関数ツール（keyword_density, readability_score）
+LLM はこれらを MCP 経由で呼び出せる。
 """
 from __future__ import annotations
-import asyncio, aiohttp, os, re
+import aiohttp, asyncio, os, re
 from collections import deque
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -13,23 +13,25 @@ from bs4 import BeautifulSoup
 from readability import Document
 from slugify import slugify
 from openai import AsyncOpenAI
+from textstat import flesch_reading_ease
+
 from .config import settings
 
 client = AsyncOpenAI(api_key=settings.api_key)
 
+# ────────────────────────────────────── CRAWLER
 async def _fetch(session: aiohttp.ClientSession, url: str, timeout: int = 30) -> str:
-    async with session.get(url, timeout=timeout) as resp:
-        resp.raise_for_status()
-        return await resp.text()
+    async with session.get(url, timeout=timeout) as res:
+        res.raise_for_status()
+        return await res.text()
 
-async def crawl_site(root_url: str, limit: int = 30) -> dict[str, str]:
-    """幅優先クロール → {url: プレーンテキスト}"""
+async def crawl_site(root_url: str, limit: int = 40) -> dict[str, str]:
     seen, texts = set(), {}
-    queue: deque[str] = deque([root_url])
+    q: deque[str] = deque([root_url])
 
     async with aiohttp.ClientSession() as session:
-        while queue and len(texts) < limit:
-            url = queue.popleft()
+        while q and len(texts) < limit:
+            url = q.popleft()
             if url in seen:
                 continue
             seen.add(url)
@@ -37,29 +39,30 @@ async def crawl_site(root_url: str, limit: int = 30) -> dict[str, str]:
                 html = await _fetch(session, url)
             except Exception:
                 continue
+
             doc = Document(html)
             txt = BeautifulSoup(doc.summary(), "html.parser").get_text(" ", strip=True)
             if txt.strip():
-                texts[url] = txt[:20_000]  # 上限
-            # 内部リンクをキューに追加
+                texts[url] = txt[:20_000]
+
             for a in BeautifulSoup(html, "html.parser").find_all("a", href=True):
                 href = a["href"]
                 if href.startswith("#"):
                     continue
-                joined = urljoin(url, href)
-                if urlparse(joined).netloc == urlparse(root_url).netloc:
-                    queue.append(joined)
+                tgt = urljoin(url, href)
+                if urlparse(tgt).netloc == urlparse(root_url).netloc:
+                    q.append(tgt)
     return texts
 
-async def build_vector_store(texts: dict[str, str], name: str) -> str:
-    valid = [(p, t) for p, t in texts.items() if t.strip()]
-    if not valid:
-        raise ValueError("収集された非空のページがありません。")
+# ────────────────────────────────────── VECTOR STORE
+async def build_vector_store(pages: dict[str, str], name: str) -> str:
+    if not pages:
+        raise RuntimeError("ページが取得できませんでした。")
 
     file_ids = []
-    for path, content in valid:
+    for url, txt in pages.items():
         with NamedTemporaryFile("w+", delete=False, suffix=".txt") as f:
-            f.write(content)
+            f.write(txt)
             tmp = f.name
         try:
             res = await client.files.create(file=open(tmp, "rb"), purpose="assistants")
@@ -70,11 +73,15 @@ async def build_vector_store(texts: dict[str, str], name: str) -> str:
     vs = await client.vector_stores.create(name=slugify(name), file_ids=file_ids)
     return vs.id
 
-# ── ローカルキーワード分析ツール（シンプルなラッパー） ────────────────────────────────
-def keyword_density(text: str, kw: str) -> float:
+# ────────────────────────────────────── LOCAL ANALYSIS
+def keyword_density(text: str, keyword: str) -> float:
+    tokens = re.findall(r"\w+", text.lower())
+    kw_tokens = re.findall(r"\w+", keyword.lower())
+    hits = sum(1 for i in range(len(tokens)) if tokens[i:i+len(kw_tokens)] == kw_tokens)
+    return round(100 * hits / max(1, len(tokens)), 2)
+
+def readability_score(text: str) -> float:
+    """Flesch Reading Ease (英語指標だが日本語でも相対値として使う)"""
     if not text:
         return 0.0
-    tokens = re.findall(r"\w+", text.lower())
-    kw_tokens = re.findall(r"\w+", kw.lower())
-    count = sum(1 for i in range(len(tokens)) if tokens[i : i + len(kw_tokens)] == kw_tokens)
-    return round(100 * count / max(1, len(tokens)), 2)
+    return round(flesch_reading_ease(text), 2)
