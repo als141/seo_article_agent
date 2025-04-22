@@ -1,0 +1,21 @@
+{
+  "servers": {
+    "filesystem": {
+      "type": "stdio",
+      "enabled": true,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"]
+    },
+    "git": {
+      "type": "stdio",
+      "enabled": false,
+      "command": "uvx",
+      "args": ["mcp-server-git"]
+    },
+    "debug_sse": {
+      "type": "sse",
+      "enabled": false,
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
